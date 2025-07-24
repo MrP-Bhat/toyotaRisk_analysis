@@ -1,0 +1,25 @@
+Garch Risk Analysis/
+│
+├── 📘 GARCH_Risk_Analysis.ipynb          # Main Jupyter notebook
+│
+├── 📁 data/
+│   └── Toyota_Data.csv                   # Raw CSV file (already uploaded)
+│
+├── 📁 output/
+│   ├── volatility_plots/                 # Saved volatility/time series plots
+│   ├── var_plots/                        # VaR plots and backtesting visuals
+│   └── model_forecasts/                  # CSVs of rolling forecasts if needed
+│
+├── 📁 utils/
+│   └── garch_helpers.py                  # Optional Python file for helper functions (e.g., rolling window, VaR calc)
+│
+├── 📁 streamlit_app/                     # Optional app files if you build UI later
+│   ├── app.py
+│   └── requirements.txt
+│
+├── 📁 reports/
+│   ├── abstract.md                       # Your abstract or report files
+│   ├── final_report.pdf                  # Final compiled project report
+│   └── project_ppt.pptx                  # Optional PowerPoint
+│
+└── README.md                             # Project overview and instructions

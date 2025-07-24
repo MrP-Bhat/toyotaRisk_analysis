@@ -1,0 +1,99 @@
+import pandas as pd
+
+# Load your data (make sure it's inside the `data/` folder)
+df = pd.read_csv('data/toyotaData.csv', parse_dates=['Date'], dayfirst=True)
+
+# Sort by date (very important for time series)
+df = df.sort_values('Date').reset_index(drop=True)
+
+# Preview the first few rows
+df.head()
+
+# Basic structure
+df.info()
+
+# Check for missing values
+df.isnull().sum()
+
+# Quick statistics
+df.describe()
+
+import numpy as np
+
+# Create log return column
+df['LogReturn'] = np.log(df['Adj Close'] / df['Adj Close'].shift(1))
+
+# Drop NaN created by shift
+df = df.dropna().reset_index(drop=True)
+
+# Preview
+df[['Date', 'Adj Close', 'LogReturn']].head()
+
+# Check for any remaining NaNs
+df.isnull().sum()
+
+# Check return range
+df['LogReturn'].describe()
+
+from arch import arch_model
+
+# Create the GARCH(1,1) model
+model = arch_model(df['LogReturn'], vol='Garch', p=1, q=1)
+
+# Fit the model
+model_fit = model.fit(disp='off')
+
+# Display summary
+print(model_fit.summary())
+df['Volatility'] = model_fit.conditional_volatility
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(14,6))
+plt.plot(df['Date'], df['Volatility'], label='GARCH(1,1) Volatility', color='darkorange')
+plt.title("Toyota Stock – GARCH(1,1) Predicted Daily Volatility")
+plt.xlabel("Date")
+plt.ylabel("Volatility")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+from arch import arch_model
+from tqdm import tqdm
+
+rolling_window = 250  # Can later make this dynamic
+rolling_vol = []      # Store forecasted volatilities
+rolling_dates = []    # Store corresponding dates
+
+# Loop through the dataset from [250, 251, ..., end]
+for i in tqdm(range(rolling_window, len(df))):
+    # Slice window
+    window_data = df['LogReturn'].iloc[i - rolling_window:i]
+    
+    # Fit GARCH model
+    model = arch_model(window_data, vol='Garch', p=1, q=1)
+    model_fit = model.fit(disp='off')
+    
+    # Forecast volatility for next day
+    forecast = model_fit.forecast(horizon=1)
+    predicted_vol = np.sqrt(forecast.variance.values[-1][0])
+    
+    # Store
+    rolling_vol.append(predicted_vol)
+    rolling_dates.append(df['Date'].iloc[i])
+
+# Create a new DataFrame
+rolling_df = pd.DataFrame({
+    'Date': rolling_dates,
+    'RollingVolatility_250d': rolling_vol
+})
+
+plt.figure(figsize=(14,6))
+plt.plot(rolling_df['Date'], rolling_df['RollingVolatility_250d'], color='mediumblue', label='Rolling GARCH Volatility (250d)')
+plt.title("Rolling GARCH(1,1) Volatility Forecast (250-Day Window)")
+plt.xlabel("Date")
+plt.ylabel("Forecasted Volatility")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()

@@ -1,0 +1,220 @@
+import pandas as pd
+
+# Load your data (make sure it's inside the `data/` folder)
+df = pd.read_csv('data/toyotaData.csv', parse_dates=['Date'], dayfirst=True)
+
+# Sort by date (very important for time series)
+df = df.sort_values('Date').reset_index(drop=True)
+
+# Preview the first few rows
+df.head()
+
+--------------------------------------------------------
+
+# Basic structure
+df.info()
+
+# Check for missing values
+df.isnull().sum()
+
+# Quick statistics
+df.describe()
+
+-------------------------------
+
+import numpy as np
+
+# Create log return column
+df['LogReturn'] = np.log(df['Adj Close'] / df['Adj Close'].shift(1))
+
+# Drop NaN created by shift
+df = df.dropna().reset_index(drop=True)
+
+# Preview
+df[['Date', 'Adj Close', 'LogReturn']].head()
+---------------------------------------------------------
+
+# Check for any remaining NaNs
+df.isnull().sum()
+
+# Check return range
+df['LogReturn'].describe()
+---------------------------------------
+
+from arch import arch_model
+----------------------------------------------
+
+# Create the GARCH(1,1) model
+model = arch_model(df['LogReturn'], vol='Garch', p=1, q=1)
+
+# Fit the model
+model_fit = model.fit(disp='off')
+
+# Display summary
+print(model_fit.summary())
+----------------------------------------------------------------
+
+# Use in-sample predicted volatility (conditional standard deviation)
+df['Volatility'] = model_fit.conditional_volatility
+
+---------------------------------------------------------------------
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(14,6))
+plt.plot(df['Date'], df['Volatility'], label='GARCH(1,1) Volatility', color='darkorange')
+plt.title("Toyota Stock – GARCH(1,1) Predicted Daily Volatility")
+plt.xlabel("Date")
+plt.ylabel("Volatility")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+--------------------------------------------------------------
+
+def compute_rolling_volatility(df, window):
+    filename = f"rolling_vol_{window}d.csv"
+    import os
+    
+    if os.path.exists(filename):
+        print(f"✅ CSV already exists: '{filename}' — skipping GARCH computation.")
+        vol_df = pd.read_csv(filename, parse_dates=['Date'])
+        df = pd.merge(df, vol_df, on='Date', how='left')
+        df[f'RollingVolatility_{window}d'] = df[f'RollingVolatility_{window}d'].fillna(method='ffill')
+        return df
+
+    print(f"🚀 Computing GARCH rolling volatility for {window}-day window...")
+
+    from arch import arch_model
+    from tqdm import tqdm
+    rolling_vol = []
+    rolling_dates = []
+
+    for i in tqdm(range(window, len(df), 5)):  # Step = 5 for speed
+        window_data = df['LogReturn'].iloc[i - window:i]
+        model = arch_model(window_data, vol='Garch', p=1, q=1)
+        model_fit = model.fit(disp='off', update_freq=0)
+        forecast = model_fit.forecast(horizon=1)
+        predicted_vol = np.sqrt(forecast.variance.values[-1][0])
+        rolling_vol.append(predicted_vol)
+        rolling_dates.append(df['Date'].iloc[i])
+
+    # Create and save CSV
+    rolling_df = pd.DataFrame({
+        'Date': rolling_dates,
+        f'RollingVolatility_{window}d': rolling_vol
+    })
+    rolling_df.to_csv(filename, index=False)
+    print(f"✅ Saved rolling volatility to '{filename}'")
+
+    # Merge with main DataFrame
+    df = pd.merge(df, rolling_df, on='Date', how='left')
+    df[f'RollingVolatility_{window}d'] = df[f'RollingVolatility_{window}d'].fillna(method='ffill')
+    return df
+    ------------------------------------------------------------
+
+for w in [7, 30, 90, 250]:
+    df = compute_rolling_volatility(df, window=w)
+    --------------------------------------------------------
+
+# Plot
+plt.figure(figsize=(14, 6))
+plt.plot(df['Date'], df['RollingVolatility_7d'], label='GARCH Volatility (7d, every 5th day)', color='teal')
+plt.title("Optimized Rolling GARCH(1,1) Volatility (7-Day Window, Subsampled)")
+plt.xlabel("Date")
+plt.ylabel("Forecasted Volatility")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()
+--------------------------------------------------------------
+import pandas as pd
+import numpy as np
+
+# Load and sort the data
+df = pd.read_csv('data/toyotaData.csv', parse_dates=['Date'], dayfirst=True)
+df = df.sort_values("Date").reset_index(drop=True)
+
+# Log Returns
+df["LogReturn"] = np.log(df["Adj Close"] / df["Adj Close"].shift(1))
+df.dropna(inplace=True)
+
+# Feature Engineering
+df["MA_5"] = df["Adj Close"].rolling(5).mean()
+df["MA_10"] = df["Adj Close"].rolling(10).mean()
+df["Momentum"] = df["LogReturn"] - df["LogReturn"].shift(1)
+df["Lag1_Return"] = df["LogReturn"].shift(1)
+df["Lag2_Return"] = df["LogReturn"].shift(2)
+df["Lag1_Volatility"] = df["LogReturn"].rolling(window=7).std().shift(1)
+
+# Simulated Rolling GARCH (or use your GARCH result if you have it)
+df["RollingVolatility_7d"] = df["LogReturn"].rolling(window=7).std()
+
+# Target = Tomorrow’s rolling volatility
+df["TargetVolatility"] = df["RollingVolatility_7d"].shift(-1)
+df.dropna(inplace=True)
+
+# Features and target
+features = ["LogReturn", "MA_5", "MA_10", "Momentum", "Lag1_Return", "Lag2_Return", "Lag1_Volatility"]
+X = df[features]
+y = df["TargetVolatility"]
+
+# Chronological split (80% train, 20% test)
+split = int(0.8 * len(X))
+X_train, X_test = X.iloc[:split], X.iloc[split:]
+y_train, y_test = y.iloc[:split], y.iloc[split:]
+
+--------------------------------------------------------------
+
+from xgboost import XGBRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import matplotlib.pyplot as plt
+
+# Initialize and train
+model = XGBRegressor(n_estimators=100, learning_rate=0.1, max_depth=3)
+model.fit(X_train, y_train)
+
+# Predict
+y_pred = model.predict(X_test)
+
+# Evaluation
+mae = mean_absolute_error(y_test, y_pred)
+rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+r2 = r2_score(y_test, y_pred)
+
+print(f"MAE:  {mae:.6f}")
+print(f"RMSE: {rmse:.6f}")
+print(f"R²:   {r2:.4f}")
+
+# Plot predicted vs actual
+plt.figure(figsize=(10,5))
+plt.plot(y_test.values, label='Actual')
+plt.plot(y_pred, label='Predicted')
+plt.title('XGBoost Predicted vs Actual Volatility')
+plt.xlabel('Test Sample Index')
+plt.ylabel('Volatility')
+plt.legend()
+plt.tight_layout()
+plt.grid(True)
+plt.show()
+---------------------------------------------------------------
+
+
+
+plt.figure(figsize=(12,5))
+plt.plot(y_test.values, label='Actual Volatility', color='darkblue')
+plt.plot(y_pred, label='Predicted Volatility', color='orange', alpha=0.7)
+plt.title("📈 Predicted vs Actual Daily Volatility (XGBoost)")
+plt.xlabel("Test Sample Index")
+plt.ylabel("Volatility")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+-----------------------------------------------------
+plt.figure(figsize=(8,4))
+pd.Series(model.feature_importances_, index=X_train.columns)\
+    .sort_values().plot(kind='barh', color='mediumseagreen')
+plt.title("🧠 XGBoost Feature Importance")
+plt.tight_layout()
+plt.show()
